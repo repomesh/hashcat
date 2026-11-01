@@ -48,7 +48,7 @@ const char *module_st_pass        (MAYBE_UNUSED const hashconfig_t *hashconfig, 
 
 typedef struct jwt
 {
-  u32 salt_buf[1024];
+  u32 salt_buf[2048];
   u32 salt_len;
 
   u32 signature_len;
@@ -130,13 +130,13 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
 
   token.sep[0]     = '.';
   token.len_min[0] = 1;
-  token.len_max[0] = 2047;
+  token.len_max[0] = 8190;
   token.attr[0]    = TOKEN_ATTR_VERIFY_LENGTH
                    | TOKEN_ATTR_VERIFY_BASE64C;
 
   token.sep[1]     = '.';
   token.len_min[1] = 1;
-  token.len_max[1] = 2047;
+  token.len_max[1] = 8190;
   token.attr[1]    = TOKEN_ATTR_VERIFY_LENGTH
                    | TOKEN_ATTR_VERIFY_BASE64C;
 
@@ -167,9 +167,12 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
 
   // esalt
 
+  // The header and the payload share salt_buf, so either of them may take what the other leaves.
+  // JWT sets no limit of its own, and 8 KB is about the longest header line a web server accepts.
+
   const int esalt_len = header_len + 1 + payload_len;
 
-  if (esalt_len > 4096) return (PARSER_SALT_LENGTH);
+  if (esalt_len > (int) sizeof (jwt->salt_buf)) return (PARSER_SALT_LENGTH);
 
   memcpy (jwt->salt_buf, line_buf, esalt_len);
 
@@ -191,7 +194,7 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
 
   memset (block, 0, sizeof (block));
 
-  for (int i = 0; i < 1024; i += 16)
+  for (int i = 0; i < 2048; i += 16)
   {
     for (int j = 0; j < 16; j++)
     {
@@ -328,7 +331,7 @@ int module_hash_encode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
     ptr_plain[86] = 0;
   }
 
-  const int line_len = snprintf (line_buf, line_size, "%s.%s", (const char *) jwt->salt_buf, (const char *) ptr_plain);
+  const int line_len = snprintf (line_buf, line_size, "%.*s.%s", (int) jwt->salt_len, (const char *) jwt->salt_buf, (const char *) ptr_plain);
 
   return line_len;
 }

@@ -12947,14 +12947,14 @@ static bool is_apple_silicon_device_name (const char *device_name)
 // The program the result lands in is named by its slot rather than by four out pointers, so a caller
 // names the program to build and no more.
 
-static bool load_kernel_program (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param, const char *kernel_name, char *source_file, char *cached_file, const char *build_options_buf, const bool cache_disable, const hc_dev_program_t program, size_t *kernel_lengths, char **kernel_sources)
+static bool load_kernel_program (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param, const char *kernel_name, char *source_file, char *cached_file, const char *build_options_buf, const bool cache_disable, const bool cache_refused, const hc_dev_program_t program, size_t *kernel_lengths, char **kernel_sources)
 {
   const backend_ctx_t   *backend_ctx   = hashcat_ctx->backend_ctx;
   const hashconfig_t    *hashconfig    = hashcat_ctx->hashconfig;
   const user_options_t  *user_options  = hashcat_ctx->user_options;
   const folder_config_t *folder_config = hashcat_ctx->folder_config;
 
-  const bool cached = kernel_is_cached (cached_file, cache_disable);
+  const bool cached = (cache_refused == true) ? false : kernel_is_cached (cached_file, cache_disable);
 
   /**
    * kernel compile or load
@@ -13654,6 +13654,9 @@ static bool load_kernel_program (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *
         event_log_error (hashcat_ctx, "%s", mod_error_log);
         event_log_error (hashcat_ctx, NULL);
 
+        hcfree (mod_info_log);
+        hcfree (mod_error_log);
+
         return false;
       }
 
@@ -13703,6 +13706,9 @@ static bool load_kernel_program (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *
         event_log_error (hashcat_ctx, "%s", mod_error_log);
         event_log_error (hashcat_ctx, NULL);
 
+        hcfree (mod_info_log);
+        hcfree (mod_error_log);
+
         return false;
       }
 
@@ -13740,7 +13746,28 @@ static bool load_kernel_build (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *de
 
   char **kernel_sources = &kernel_sources_buf;
 
-  const bool rc = load_kernel_program (hashcat_ctx, device_param, kernel_name, source_file, cached_file, build_options_buf, cache_disable, program, kernel_lengths, kernel_sources);
+  // A cache key can match a binary the runtime no longer accepts, when an update changed the compiler
+  // but nothing the key is made of. Giving up there would fail the device on every start until the
+  // cache is deleted by hand, so the program is built from the source and the build overwrites the
+  // file. Metal is left out: its cache holds pipelines, and its build already starts from the source.
+
+  const bool from_cache = (device_param->is_metal == false) && (kernel_is_cached (cached_file, cache_disable) == true);
+
+  bool rc = load_kernel_program (hashcat_ctx, device_param, kernel_name, source_file, cached_file, build_options_buf, cache_disable, false, program, kernel_lengths, kernel_sources);
+
+  if ((rc == false) && (from_cache == true))
+  {
+    event_log_warning (hashcat_ctx, "* Device #%u: The runtime refused the cached kernel %s. Building it again.", device_param->device_id + 1, cached_file);
+    event_log_warning (hashcat_ctx, NULL);
+
+    if (device_param->is_opencl == true) hc_clReleaseProgramPtr (hashcat_ctx, &device_param->opencl_program[program]);
+
+    hcfree (kernel_sources[0]);
+
+    kernel_sources[0] = NULL;
+
+    rc = load_kernel_program (hashcat_ctx, device_param, kernel_name, source_file, cached_file, build_options_buf, cache_disable, true, program, kernel_lengths, kernel_sources);
+  }
 
   hcfree (kernel_sources[0]);
 

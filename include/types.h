@@ -965,6 +965,8 @@ typedef enum parser_rc
   PARSER_PKZIP_MEMBER_TOO_SHORT   = -52,
   PARSER_ZLIB_UNAVAILABLE         = -53,
 
+  PARSER_SEVEN_ZIP_METHOD_UNSUPPORTED = -54,
+
   PARSER_HAVE_ERRNO           = -100,
   PARSER_UNKNOWN_ERROR        = -255
 
@@ -3176,6 +3178,13 @@ typedef struct bitmap_ctx
 
 } bitmap_ctx_t;
 
+typedef struct folder_request
+{
+  bool  given;
+  char *profile_folder;
+
+} folder_request_t;
+
 typedef struct folder_config
 {
   char *cwd;
@@ -3185,6 +3194,11 @@ typedef struct folder_config
   char *session_dir;
   char *shared_dir;
   char *cpath_real;
+
+  // What a program asked for with hashcat_session_init_folders (). folder_config_destroy () keeps it,
+  // because a restore into another working directory sets the folders above up a second time.
+
+  folder_request_t request;
 
 } folder_config_t;
 
