@@ -557,6 +557,22 @@ Callback `module_salt_type()` selects the storage and input rules for salted and
 * `SALT_TYPE_GENERIC`: Selects a user-supplied salt format that may vary between exporting tools and enables option `--hex-salt`.
 * `SALT_TYPE_VIRTUAL`: Supplies a fixed synthetic salt, normally empty, so an unsalted format variant can reuse a kernel that expects salt data. For example, `md5(md5($p))` shares a kernel with vBulletin `md5(md5($p).$s)`.
 
+### module_combined_len_max(), module_combined_len_pw() and module_combined_len_salt() ###
+
+The password and salt limits from `module_pw_max()` and `module_salt_max()` apply to each field on its own. Some optimized kernels keep password and salt in one buffer, so the two also have to fit together. In `md5($p.$s)`, both share one 64-byte block, of which 55 bytes are left after the padding and the length.
+
+Callback `module_combined_len_max()` returns how much password and salt may take together, or 0 when they do not share a buffer. Most modes return 55 for their optimized kernel and 0 for the pure kernel, which has no such limit. Callbacks `module_combined_len_pw()` and `module_combined_len_salt()` return what a password of a given length and a given salt count towards that limit. A password and a salt fit together when the sum of the two counts does not exceed the limit:
+
+```
+u32 module_combined_len_max  (const hashconfig_t *hashconfig, const user_options_t *user_options, const user_options_extra_t *user_options_extra)
+u32 module_combined_len_pw   (const hashconfig_t *hashconfig, const user_options_t *user_options, const user_options_extra_t *user_options_extra, const u32 pw_len)
+u32 module_combined_len_salt (const hashconfig_t *hashconfig, const user_options_t *user_options, const user_options_extra_t *user_options_extra, const salt_t *salt, const void *esalt)
+```
+
+By default, a password counts its length, doubled in the optimized kernel of a UTF-16 mode, and a salt counts its stored `salt_len`. A mode that keeps the salt twice, such as `md5($s.$p.$s)`, counts it twice. A mode with a constant beside them in the buffer adds the constant to one of the two counts.
+
+The limit itself does not change `pw_max` or `salt_max`. After the hashes are loaded, hashcat works out the longest password that fits beside each salt and reports it, together with a warning when a salt leaves less than `pw_max`. Candidates are not dropped. A mode that leaves all three unassigned has no combined limit, which is the previous behavior.
+
 ### module_st_hash() ###
 
 Callback `module_st_hash()` returns an artificial self-test hash, normally generated for the password `hashcat` with `test_module_runner.py` in passthrough mode. Callback `module_st_pass()` supplies its matching password.
@@ -1004,7 +1020,7 @@ An external plugin can use the following compile command. The interface version 
 
 ```
 gcc -O2 -fPIC -shared -fvisibility=hidden \
-    -DHC_PLUGIN_ABI_VERSION=800 -DMODULE_INTERFACE_VERSION_CURRENT=800 \
+    -DHC_PLUGIN_ABI_VERSION=810 -DMODULE_INTERFACE_VERSION_CURRENT=810 \
     -I/usr/local/include/hashcat -I/usr/local/share/hashcat/OpenCL \
     module_80000.c -o module_80000.so \
     -L/usr/local/lib -lhashcat -Wl,-rpath,'$ORIGIN/..' -Wl,-z,defs
@@ -1014,7 +1030,7 @@ Keep `-Wl,-z,defs` so the link fails when the core does not export a referenced 
 
 A source-distributed plugin is compiled against the user's installed core and needs no separate compatibility build. A binary-distributed plugin must be rebuilt for each plugin interface version. hashcat rejects an incompatible binary before running any plugin code.
 
-Compatibility is enforced through a versioned exported symbol such as `HASHCAT_PLUGIN_800`. Every C plugin holds a pointer to that symbol through `include/export.h`, although the function is never called. Raising `MODULE_INTERFACE_VERSION` changes the symbol name, so an older plugin cannot resolve it. This check works before `module_init()` on Linux, macOS, and Windows.
+Compatibility is enforced through a versioned exported symbol such as `HASHCAT_PLUGIN_810`. Every C plugin holds a pointer to that symbol through `include/export.h`, although the function is never called. Raising `MODULE_INTERFACE_VERSION` changes the symbol name, so an older plugin cannot resolve it. This check works before `module_init()` on Linux, macOS, and Windows.
 
 Compile-time definition `HC_PLUGIN_ABI_VERSION` supplies the version number. Headers `include/modules.h`, `include/bridges.h`, and `include/feed.h` require it so that no C plugin can be built without the compatibility reference.
 
@@ -1023,7 +1039,7 @@ The Rust feed is the one plugin here that is not built this way. It calls no cor
 An incompatible plugin produces the same diagnostic on every platform:
 
 ```
-Module modules/module_12345.so was built for plugin interface 720, this hashcat provides 800
+Module modules/module_12345.so was built for plugin interface 800, this hashcat provides 810
 ```
 
 hashcat then stops. Native loader errors differ by platform, so hashcat reads the version from the plugin and reports a consistent message. Rebuild the named plugin against the current hashcat version.
@@ -1163,7 +1179,9 @@ Header `shared.h` was split, so include the header that now owns each helper. Pa
 
 ## Porting a plugin from 8.0.0 ##
 
-A plugin written for hashcat 8.0.0 needs no source change. Its `module_init()` assigns `MODULE_DEFAULT` to every callback it does not implement, and hashcat accepts that as before.
+A plugin written for hashcat 8.0.0 needs no source change. Its `module_init()` assigns `MODULE_DEFAULT` to every callback it does not implement, and hashcat accepts that as before. A compiled plugin has to be rebuilt, because the plugin interface version is now 810.
+
+Three hooks were added: `module_combined_len_max`, `module_combined_len_pw` and `module_combined_len_salt`, see `module_combined_len_max()` above. Leaving them unassigned preserves the previous behavior.
 
 A module now only has to assign the callbacks it implements, see `module_init()` above, so a hook added in a later version appears only in the modules that use it. The following command removes the `MODULE_DEFAULT` assignments from a module, which is how the in-tree modules look now:
 

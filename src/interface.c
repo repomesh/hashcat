@@ -242,6 +242,9 @@ static void module_ctx_defaults (module_ctx_t *module_ctx)
   if (module_ctx->module_bridge_name             == NULL) module_ctx->module_bridge_name             = MODULE_DEFAULT;
   if (module_ctx->module_bridge_type             == NULL) module_ctx->module_bridge_type             = MODULE_DEFAULT;
   if (module_ctx->module_build_plain_postprocess == NULL) module_ctx->module_build_plain_postprocess = MODULE_DEFAULT;
+  if (module_ctx->module_combined_len_max        == NULL) module_ctx->module_combined_len_max        = MODULE_DEFAULT;
+  if (module_ctx->module_combined_len_pw         == NULL) module_ctx->module_combined_len_pw         = MODULE_DEFAULT;
+  if (module_ctx->module_combined_len_salt       == NULL) module_ctx->module_combined_len_salt       = MODULE_DEFAULT;
   if (module_ctx->module_deep_comp_kernel        == NULL) module_ctx->module_deep_comp_kernel        = MODULE_DEFAULT;
   if (module_ctx->module_deprecated_notice       == NULL) module_ctx->module_deprecated_notice       = MODULE_DEFAULT;
   if (module_ctx->module_usage_notice            == NULL) module_ctx->module_usage_notice            = MODULE_DEFAULT;
@@ -366,6 +369,12 @@ int hashconfig_init (hashcat_ctx_t *hashcat_ctx)
   // either way and the question "did this module define one" is asked once.
 
   if (module_ctx->module_hash_hints == MODULE_DEFAULT) module_ctx->module_hash_hints = default_hash_hints;
+
+  // The same for what a password and a salt count towards hashconfig->combined_len_max, which
+  // hashes_init_stage4 () asks once for every salt and every password length.
+
+  if (module_ctx->module_combined_len_pw   == MODULE_DEFAULT) module_ctx->module_combined_len_pw   = default_combined_len_pw;
+  if (module_ctx->module_combined_len_salt == MODULE_DEFAULT) module_ctx->module_combined_len_salt = default_combined_len_salt;
 
   if (module_ctx->module_context_size != MODULE_CONTEXT_SIZE_CURRENT)
   {
@@ -732,6 +741,7 @@ int hashconfig_init (hashcat_ctx_t *hashcat_ctx)
   hashconfig->pw_min              = default_pw_min              (hashconfig, user_options, user_options_extra);
   hashconfig->salt_max            = default_salt_max            (hashconfig, user_options, user_options_extra);
   hashconfig->salt_min            = default_salt_min            (hashconfig, user_options, user_options_extra);
+  hashconfig->combined_len_max    = default_combined_len_max    (hashconfig, user_options, user_options_extra);
   hashconfig->kernel_accel_min    = default_kernel_accel_min    (hashconfig, user_options, user_options_extra);
   hashconfig->kernel_accel_max    = default_kernel_accel_max    (hashconfig, user_options, user_options_extra);
   hashconfig->kernel_loops_min    = default_kernel_loops_min    (hashconfig, user_options, user_options_extra);
@@ -743,6 +753,7 @@ int hashconfig_init (hashcat_ctx_t *hashcat_ctx)
   if (module_ctx->module_pw_min             != MODULE_DEFAULT) hashconfig->pw_min             = module_ctx->module_pw_min             (hashconfig, user_options, user_options_extra);
   if (module_ctx->module_salt_max           != MODULE_DEFAULT) hashconfig->salt_max           = module_ctx->module_salt_max           (hashconfig, user_options, user_options_extra);
   if (module_ctx->module_salt_min           != MODULE_DEFAULT) hashconfig->salt_min           = module_ctx->module_salt_min           (hashconfig, user_options, user_options_extra);
+  if (module_ctx->module_combined_len_max   != MODULE_DEFAULT) hashconfig->combined_len_max   = module_ctx->module_combined_len_max   (hashconfig, user_options, user_options_extra);
   if (module_ctx->module_kernel_accel_min   != MODULE_DEFAULT) hashconfig->kernel_accel_min   = module_ctx->module_kernel_accel_min   (hashconfig, user_options, user_options_extra);
   if (module_ctx->module_kernel_accel_max   != MODULE_DEFAULT) hashconfig->kernel_accel_max   = module_ctx->module_kernel_accel_max   (hashconfig, user_options, user_options_extra);
   if (module_ctx->module_kernel_loops_min   != MODULE_DEFAULT) hashconfig->kernel_loops_min   = module_ctx->module_kernel_loops_min   (hashconfig, user_options, user_options_extra);
@@ -1246,4 +1257,33 @@ u32 default_salt_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED 
   }
 
   return salt_max;
+}
+
+u32 default_combined_len_max (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra)
+{
+  // no kernel keeps password and salt in one buffer unless its module says so
+
+  const u32 combined_len_max = 0;
+
+  return combined_len_max;
+}
+
+u32 default_combined_len_pw (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra, const u32 pw_len)
+{
+  // an optimized kernel of a UTF-16 mode widens each password byte to two
+
+  const bool optimized_kernel = (hashconfig->opti_type & OPTI_TYPE_OPTIMIZED_KERNEL);
+
+  const bool utf16 = ((hashconfig->opts_type & OPTS_TYPE_PT_UTF16LE) || (hashconfig->opts_type & OPTS_TYPE_PT_UTF16BE));
+
+  const u32 combined_len_pw = ((optimized_kernel == true) && (utf16 == true)) ? (pw_len * 2) : pw_len;
+
+  return combined_len_pw;
+}
+
+u32 default_combined_len_salt (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra, const salt_t *salt, MAYBE_UNUSED const void *esalt)
+{
+  const u32 combined_len_salt = salt->salt_len;
+
+  return combined_len_salt;
 }
